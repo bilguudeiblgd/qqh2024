@@ -129,27 +129,68 @@ class Model:
 
     def update_team_map(self, games: pd.DataFrame):
         """
-        Update team_map with the latest game data.
+        Update team_map with the latest game data, calculating aggregate team statistics.
         :param games: DataFrame containing game statistics.
         """
         for _, game in games.iterrows():
             home_team = game["HID"]
             away_team = game["AID"]
 
-            # Use correct column names for scores
-            home_score_column = "HSC"
-            away_score_column = "ASC"
+            # Ensure team_map structure exists for both teams
+            if home_team not in self.team_map:
+                self.team_map[home_team] = {
+                    "home_games": deque(maxlen=10),
+                    "away_games": deque(maxlen=10),
+                    "stats": defaultdict(float)  # Store cumulative stats for the team
+                }
+            if away_team not in self.team_map:
+                self.team_map[away_team] = {
+                    "home_games": deque(maxlen=10),
+                    "away_games": deque(maxlen=10),
+                    "stats": defaultdict(float)
+                }
 
-            # Update home team's games
+            # Add game data to home and away teams
             self.team_map[home_team]["home_games"].append(game.to_dict())
-
-            self.team_map[home_team][].append(game[home_score_column])
-            self.team_map[home_team].append(game[away_score_column])
-
-            # Update away team's games
             self.team_map[away_team]["away_games"].append(game.to_dict())
-            self.team_map[away_team].append(game[away_score_column])
-            self.team_map[away_team].setdefault("away_allowed", deque()).append(game[home_score_column])
+
+            # Update team stats for the home team
+            home_stats = self.team_map[home_team]["stats"]
+            home_stats["points_scored"] += game["HSC"]
+            home_stats["points_allowed"] += game["ASC"]
+            home_stats["field_goals_made"] += game["HFGM"]
+            home_stats["field_goal_attempts"] += game["HFGA"]
+            home_stats["free_throws_made"] += game["HFTM"]
+            home_stats["free_throw_attempts"] += game["HFTA"]
+            home_stats["three_pointers_made"] += game["HFG3M"]
+            home_stats["three_pointer_attempts"] += game["HFG3A"]
+            home_stats["offensive_rebounds"] += game["HORB"]
+            home_stats["defensive_rebounds"] += game["HDRB"]
+            home_stats["total_rebounds"] += game["HRB"]
+            home_stats["assists"] += game["HAST"]
+            home_stats["turnovers"] += game["HTOV"]
+            home_stats["blocks"] += game["HBLK"]
+            home_stats["steals"] += game["HSTL"]
+            home_stats["personal_fouls"] += game["HPF"]
+
+            # Update team stats for the away team
+            away_stats = self.team_map[away_team]["stats"]
+            away_stats["points_scored"] += game["ASC"]
+            away_stats["points_allowed"] += game["HSC"]
+            away_stats["field_goals_made"] += game["AFGM"]
+            away_stats["field_goal_attempts"] += game["AFGA"]
+            away_stats["free_throws_made"] += game["AFTM"]
+            away_stats["free_throw_attempts"] += game["AFTA"]
+            away_stats["three_pointers_made"] += game["AFG3M"]
+            away_stats["three_pointer_attempts"] += game["AFG3A"]
+            away_stats["offensive_rebounds"] += game["AORB"]
+            away_stats["defensive_rebounds"] += game["ADRB"]
+            away_stats["total_rebounds"] += game["ARB"]
+            away_stats["assists"] += game["AAST"]
+            away_stats["turnovers"] += game["ATOV"]
+            away_stats["blocks"] += game["ABLK"]
+            away_stats["steals"] += game["ASTL"]
+            away_stats["personal_fouls"] += game["APF"]
 
 
 
@@ -358,73 +399,13 @@ class Model:
 
     def get_team_stats(self, team_id: int):
         """
-        Calculate team-specific stats dynamically.
+        Retrieve pre-computed team stats from team_map.
         :param team_id: The team identifier.
         :return: A dictionary of team stats.
         """
-        # Get all players on the team
-        players = self.get_team_players(team_id)
-
-        # Initialize team stats
-        total_stats = {
-            "tm_ast": 0,  # Team assists
-            "tm_fg": 0,   # Team field goals made
-            "tm_fga": 0,  # Team field goal attempts
-            "tm_fta": 0,  # Team free throw attempts
-            "tm_ftm": 0,  # Team free throws made
-            "tm_orb": 0,  # Team offensive rebounds
-            "tm_drb": 0,  # Team defensive rebounds
-            "tm_rb": 0,   # Team total rebounds
-            "tm_blk": 0,  # Team blocks
-            "tm_stl": 0,  # Team steals
-            "tm_to": 0,   # Team turnovers
-            "tm_pf": 0,   # Team personal fouls
-            "tm_pts": 0,  # Team total points scored
-        }
-
-        # Aggregate stats for all players in the team
-        for player_id in players:
-            player_stats = self.player_map[player_id]["total_stats"]
-
-            total_stats["tm_ast"] += player_stats.get("AST", 0)
-            total_stats["tm_fg"] += player_stats.get("FGM", 0)
-            total_stats["tm_fga"] += player_stats.get("FGA", 0)
-            total_stats["tm_fta"] += player_stats.get("FTA", 0)
-            total_stats["tm_ftm"] += player_stats.get("FTM", 0)
-            total_stats["tm_orb"] += player_stats.get("ORB", 0)
-            total_stats["tm_drb"] += player_stats.get("DRB", 0)
-            total_stats["tm_rb"] += player_stats.get("RB", 0)
-            total_stats["tm_blk"] += player_stats.get("BLK", 0)
-            total_stats["tm_stl"] += player_stats.get("STL", 0)
-            total_stats["tm_to"] += player_stats.get("TOV", 0)
-            total_stats["tm_pf"] += player_stats.get("PF", 0)
-            total_stats["tm_pts"] += player_stats.get("PTS", 0)
-
-        # Calculate assist factor
-        total_stats["assist_factor"] = (
-            total_stats["tm_ast"] * total_stats["tm_fg"] / total_stats["tm_fga"]
-            if total_stats["tm_fga"] > 0 else 0
-        )
-
-        # Calculate Value of Possession (vop)
-        possessions = (
-            total_stats["tm_fga"] + 
-            0.44 * total_stats["tm_fta"] - 
-            total_stats["tm_orb"] + 
-            total_stats["tm_to"]
-        )
-        total_stats["vop"] = (
-            total_stats["tm_pts"] / possessions if possessions > 0 else 0
-        )
-
-        # Calculate Defensive Rebound Percentage (drbp)
-        opponent_orb = self.calculate_opponent_orb(team_id)  # Fetch opponent offensive rebounds
-        total_stats["drbp"] = (
-            total_stats["tm_drb"] / (total_stats["tm_drb"] + opponent_orb)
-            if (total_stats["tm_drb"] + opponent_orb) > 0 else 0
-        )
-
-        return total_stats
+        if team_id not in self.team_map:
+            raise ValueError(f"Team ID {team_id} not found in team_map.")
+        return self.team_map[team_id]["stats"]
 
     def process_past_game(self, game: pd.Series, league_stats: dict):
         home_team_id = game["HID"]
@@ -452,9 +433,9 @@ class Model:
 
         # Define default league stats (example values, update as needed)
         league_stats = {
-            "lg_ft": 5000,  # Total free throws made in the league
-            "lg_pf": 2000,  # Total personal fouls in the league
-            "lg_fta": 4000,  # Total free throw attempts in the league
+            "lg_ft": 47333,  # Total free throws made in the league
+            "lg_pf": 49907,  # Total personal fouls in the league
+            "lg_fta": 62008,  # Total free throw attempts in the league
         }
 
         # Calculate team-specific stats
@@ -498,9 +479,9 @@ class Model:
 
         # Define default league stats
         league_stats = {
-            "lg_ft": 5000,  # Total free throws made in the league
-            "lg_pf": 2000,  # Total personal fouls in the league
-            "lg_fta": 4000,  # Total free throw attempts in the league
+            "lg_ft": 47333,  # Total free throws made in the league
+            "lg_pf": 49907,  # Total personal fouls in the league
+            "lg_fta": 62008,  # Total free throw attempts in the league
         }
 
         # Process past games
