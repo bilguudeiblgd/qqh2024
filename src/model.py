@@ -10,14 +10,15 @@ class PredictionModel:
         self.train_data = pd.DataFrame()  # Store historical data for training
         self.model = XGBClassifier(eval_metric="logloss")  # Gradient Boosting Model
 
-    def add_game_result(self, game_features, result):
+    def add_game_result(self, game_features, away_features, result):
         """
         Add a game result to the training data.
         :param game_features: Dictionary of features for the game.
         :param result: Binary result (1 for win, 0 for loss).
         """
-        game_features["result"] = result
-        self.train_data = pd.concat([self.train_data, pd.DataFrame([game_features])], ignore_index=True)
+
+        merged_features = {**game_features, **away_features, 'result': result}
+        self.train_data = pd.concat([self.train_data, pd.DataFrame([merged_features])])
 
     def train_model(self):
         """
@@ -26,32 +27,34 @@ class PredictionModel:
         if self.train_data.empty:
             print("No data to train on.")
             return
-        
+
         X = self.train_data.drop(columns=["result"])
         y = self.train_data["result"]
         self.model.fit(X, y)
 
-    def predict_outcome(self, game_features):
+    def predict_outcome(self, game_features, away_features):
         """
         Predict the probability of winning for the given game.
+        :param away_features:
         :param game_features: Dictionary of features for the game.
         :return: Probability of winning.
         """
-        features_df = pd.DataFrame([game_features])
+
+        merged_features = {**game_features, **away_features}
+        features_df = pd.DataFrame([merged_features])
         return self.model.predict_proba(features_df)[:, 1]  # Probability of class 1 (win)
+
 
 class Model:
     iteration = 0
+
     def __init__(self):
         # Initialize
         self.counter = 0
         self.team_map = defaultdict(lambda: {
-            "home_games": deque(),
-            "away_games": deque(),
-            "home_scored": deque(),
-            "home_allowed": deque(),
-            "away_scored": deque(),
-            "away_allowed": deque(),
+            "home_games": list(),
+            "away_games": list(),
+            "stats": defaultdict(float)  # Store cumulative stats for the team
         })
         # Player-level stats
         self.player_map = defaultdict(lambda: {
@@ -59,7 +62,7 @@ class Model:
             "games_played": 0,
             "total_stats": defaultdict(float),  # Tracks cumulative stats
         })
-        
+
         # Team-to-players mapping
         self.team_players = defaultdict(set)
 
@@ -71,7 +74,6 @@ class Model:
         }
 
         self.prediction_model = PredictionModel()
-
 
     def update_leaderboards(self, players_df: pd.DataFrame):
         """
@@ -101,8 +103,6 @@ class Model:
         true_shooting = players_df.groupby("Player")["TS%"].mean().sort_values(ascending=False).head(10)
         self.leaderboards["true_shooting"] = true_shooting.index.tolist()
 
-
-
     def get_leaderboard(self, category: str):
         """
         Retrieve the top 10 players for a given category.
@@ -117,7 +117,8 @@ class Model:
             if category == "assists":
                 value = self.player_map[player_id]["total_stats"]["AST"]
             elif category == "blocks_steals":
-                value = self.player_map[player_id]["total_stats"]["BLK"] + self.player_map[player_id]["total_stats"]["STL"]
+                value = self.player_map[player_id]["total_stats"]["BLK"] + self.player_map[player_id]["total_stats"][
+                    "STL"]
             elif category == "points":
                 value = self.player_map[player_id]["total_stats"]["PTS"]
             elif category == "true_shooting":
@@ -125,7 +126,6 @@ class Model:
             leaderboard.append((player_id, value))
 
         return leaderboard
-
 
     def update_team_map(self, games: pd.DataFrame):
         """
@@ -135,20 +135,20 @@ class Model:
         for _, game in games.iterrows():
             home_team = game["HID"]
             away_team = game["AID"]
-
-            # Ensure team_map structure exists for both teams
-            if home_team not in self.team_map:
-                self.team_map[home_team] = {
-                    "home_games": deque(maxlen=10),
-                    "away_games": deque(maxlen=10),
-                    "stats": defaultdict(float)  # Store cumulative stats for the team
-                }
-            if away_team not in self.team_map:
-                self.team_map[away_team] = {
-                    "home_games": deque(maxlen=10),
-                    "away_games": deque(maxlen=10),
-                    "stats": defaultdict(float)
-                }
+            #
+            # # Ensure team_map structure exists for both teams
+            # if home_team not in self.team_map:
+            #     self.team_map[home_team] = {
+            #         "home_games": deque(maxlen=10),
+            #         "away_games": deque(maxlen=10),
+            #         "stats": defaultdict(float)  # Store cumulative stats for the team
+            #     }
+            # if away_team not in self.team_map:
+            #     self.team_map[away_team] = {
+            #         "home_games": deque(maxlen=10),
+            #         "away_games": deque(maxlen=10),
+            #         "stats": defaultdict(float)
+            #     }
 
             # Add game data to home and away teams
             self.team_map[home_team]["home_games"].append(game.to_dict())
@@ -202,14 +202,40 @@ class Model:
         :param team_id: Team identifier.
         :return: A dictionary with averages for the last 10 home and away games.
         """
+        if team_id not in self.team_map:
+            return {
+                "avg_home_scored": 0,
+                "avg_home_allowed": 0,
+                "avg_away_scored": 0,
+                "avg_away_allowed": 0,
+            }
+        if len(self.team_map[team_id]["home_games"]) == 0 or len(self.team_map[team_id]["away_games"]) == 0:
+            return {
+                "avg_home_scored": 0,
+                "avg_home_allowed": 0,
+                "avg_away_scored": 0,
+                "avg_away_allowed": 0,
+            }
+
         team_data = self.team_map[team_id]
+        last_10_home_scored = pd.DataFrame(team_data["home_games"][-10:])['HSC'].sum() / pd.DataFrame(
+            team_data["home_games"][-10:])['HSC'].count()
+        last_10_home_allowed = pd.DataFrame(team_data["home_games"][-10:])['ASC'].sum() / pd.DataFrame(
+            team_data["home_games"][-10:])['ASC'].count()
+
+        last_10_away_scored = pd.DataFrame(team_data["away_games"][-10:])['ASC'].sum() / pd.DataFrame(
+            team_data["away_games"][-10:])['ASC'].count()
+
+        last_10_away_allowed = pd.DataFrame(team_data["away_games"][-10:])['HSC'].sum() / pd.DataFrame(
+            team_data["away_games"][-10:])['HSC'].count()
+
         return {
-            "avg_home_scored": sum(team_data["home_scored"]) / len(team_data["home_scored"]) if team_data["home_scored"] else 0,
-            "avg_home_allowed": sum(team_data["home_allowed"]) / len(team_data["home_allowed"]) if team_data["home_allowed"] else 0,
-            "avg_away_scored": sum(team_data["away_scored"]) / len(team_data["away_scored"]) if team_data["away_scored"] else 0,
-            "avg_away_allowed": sum(team_data["away_allowed"]) / len(team_data["away_allowed"]) if team_data["away_allowed"] else 0,
+            "avg_home_scored": last_10_home_scored,
+            "avg_home_allowed": last_10_home_allowed,
+            "avg_away_scored": last_10_away_scored,
+            "avg_away_allowed": last_10_away_allowed,
         }
-    
+
     def update_player_map(self, players: pd.DataFrame):
         """Update player statistics and associate players with teams."""
         for _, player in players.iterrows():
@@ -225,7 +251,8 @@ class Model:
 
             # Update cumulative stats
             stats = self.player_map[player_id]["total_stats"]
-            for stat in ["MIN", "FGM", "FGA", "FG3M", "FG3A", "FTM", "FTA", "ORB", "DRB", "RB", "AST", "STL", "BLK", "TOV", "PF", "PTS"]:
+            for stat in ["MIN", "FGM", "FGA", "FG3M", "FG3A", "FTM", "FTA", "ORB", "DRB", "RB", "AST", "STL", "BLK",
+                         "TOV", "PF", "PTS"]:
                 stats[stat] += player[stat]
 
             # Increment games played
@@ -255,11 +282,11 @@ class Model:
         return self.team_players[team_id]
 
     def calculate_uPER(
-        self,
-        min_played, three_point_made, player_pf, lg_ft, lg_pf, player_ft, 
-        tm_ast, tm_fg, player_fg, assist_factor, player_ast, vop, drbp, 
-        player_orb, player_blk, player_fta, player_fga, player_trb, 
-        lg_fta, player_to, player_stl
+            self,
+            min_played, three_point_made, player_pf, lg_ft, lg_pf, player_ft,
+            tm_ast, tm_fg, player_fg, assist_factor, player_ast, vop, drbp,
+            player_orb, player_blk, player_fta, player_fga, player_trb,
+            lg_fta, player_to, player_stl
     ) -> float:
         """
         Calculate unadjusted Player Efficiency Rating (uPER).
@@ -375,7 +402,7 @@ class Model:
         for team_id, (home_games, away_games) in self.team_map.items():
             # Combine all games (home and away)
             all_games = home_games + away_games
-            
+
             # Calculate the average points scored and allowed if there are games
             if all_games:
                 avg_scored = sum(game[0] for game in all_games) / len(all_games)
@@ -405,18 +432,34 @@ class Model:
 
     def calculate_features_for_game(self, game: pd.Series, is_home_team: bool, league_stats: dict, team_stats: dict):
         team_id = game["HID"] if is_home_team else game["AID"]
-        team_features = {
-            "team_uPer": self.calculate_team_uPER(team_id, league_stats, team_stats),
-            # "num_top_players_in_assists": sum(1 for pid in self.get_team_players(team_id) if pid in self.leaderboards["assists"]),
-            # "num_top_players_in_defense": sum(1 for pid in self.get_team_players(team_id) if pid in self.leaderboards["blocks_steals"]),
-            # "num_top_players_in_true_shooting": sum(1 for pid in self.get_team_players(team_id) if pid in self.leaderboards["true_shooting"]),
-            # "num_top_players_in_scoring": sum(1 for pid in self.get_team_players(team_id) if pid in self.leaderboards["points"]),
-            # "avg_scored_points_last_10": sum(self.team_map[team_id]["home_scored"] + self.team_map[team_id]["away_scored"]) / min(self.team_map[team_id]["games_played"], 10),
-            # "avg_allowed_points_last_10": sum(self.team_map[team_id]["home_allowed"] + self.team_map[team_id]["away_allowed"]) / 10,
-        }
-        return team_features
-
-
+        self.team_map[team_id]["stats"]
+        average_score_stats = self.get_team_averages(team_id)
+        if is_home_team:
+            return {
+                "home_uPer": self.calculate_team_uPER(team_id, league_stats, team_stats),
+                # "num_top_players_in_assists": sum(1 for pid in self.get_team_players(team_id) if pid in self.leaderboards["assists"]),
+                # "num_top_players_in_defense": sum(1 for pid in self.get_team_players(team_id) if pid in self.leaderboards["blocks_steals"]),
+                # "num_top_players_in_true_shooting": sum(1 for pid in self.get_team_players(team_id) if pid in self.leaderboards["true_shooting"]),
+                # "num_top_players_in_scoring": sum(1 for pid in self.get_team_players(team_id) if pid in self.leaderboards["points"]),
+                "home_avg_scored_points_last_10": (average_score_stats['avg_home_scored'] + average_score_stats[
+                    'avg_away_scored']) / 2,
+                "home_avg_allowed_points_last_10": (average_score_stats['avg_home_allowed'] + average_score_stats[
+                    'avg_away_allowed']) / 2,
+                "home_odds": game['OddsH']
+            }
+        else:
+            return {
+                "away_uPer": self.calculate_team_uPER(team_id, league_stats, team_stats),
+                # "num_top_players_in_assists": sum(1 for pid in self.get_team_players(team_id) if pid in self.leaderboards["assists"]),
+                # "num_top_players_in_defense": sum(1 for pid in self.get_team_players(team_id) if pid in self.leaderboards["blocks_steals"]),
+                # "num_top_players_in_true_shooting": sum(1 for pid in self.get_team_players(team_id) if pid in self.leaderboards["true_shooting"]),
+                # "num_top_players_in_scoring": sum(1 for pid in self.get_team_players(team_id) if pid in self.leaderboards["points"]),
+                "away_avg_scored_points_last_10": (average_score_stats['avg_home_scored'] + average_score_stats[
+                    'avg_away_scored']) / 2,
+                "away_avg_allowed_points_last_10": (average_score_stats['avg_home_allowed'] + average_score_stats[
+                    'avg_away_allowed']) / 2,
+                "away_odds": game['OddsA']
+            }
 
     def get_team_stats(self, team_id: int):
         """
@@ -424,8 +467,6 @@ class Model:
         :param team_id: The team identifier.
         :return: A dictionary of team stats.
         """
-        if team_id not in self.team_map:
-            raise ValueError(f"Team ID {team_id} not found in team_map.")
         return self.team_map[team_id]["stats"]
 
     def process_past_game(self, game: pd.Series, league_stats: dict):
@@ -435,15 +476,17 @@ class Model:
         home_team_stats = self.get_team_stats(home_team_id)
         away_team_stats = self.get_team_stats(away_team_id)
 
-        home_features = self.calculate_features_for_game(game, is_home_team=True, league_stats=league_stats, team_stats=home_team_stats)
-        away_features = self.calculate_features_for_game(game, is_home_team=False, league_stats=league_stats, team_stats=away_team_stats)
+        home_features = self.calculate_features_for_game(game, is_home_team=True, league_stats=league_stats,
+                                                         team_stats=home_team_stats)
+        away_features = self.calculate_features_for_game(game, is_home_team=False, league_stats=league_stats,
+                                                         team_stats=away_team_stats)
 
         result = 1 if game["H"] == 1 else 0
-        self.prediction_model.add_game_result(home_features, result)
-        self.prediction_model.add_game_result(away_features, 1 - result)
-  # Reverse result for the away team
+        self.prediction_model.add_game_result(home_features, away_features, result)
 
-    def predict_upcoming_game(self, game: pd.Series):
+    # Reverse result for the away team
+
+    def predict_upcoming_game(self, game: pd.Series) -> float:
         """
         Predict the outcome of an upcoming game.
         :param game: Series containing game details.
@@ -487,7 +530,7 @@ class Model:
         away_features
 
         # Predict the probability of the home team winning
-        return self.prediction_model.predict_outcome(home_features)
+        return self.prediction_model.predict_outcome(home_features, away_features)
 
     def place_bets(self, summary: pd.DataFrame, opps: pd.DataFrame, inc: tuple[pd.DataFrame, pd.DataFrame]):
         """
@@ -539,7 +582,7 @@ class Model:
         # Iterate through betting opportunities
         for idx, opp in opps.iterrows():
             # Skip betting if the prediction model has insufficient training data
-            if len(self.prediction_model.train_data) <= 500:
+            if len(self.prediction_model.train_data) <= 200:
                 continue
 
             # Predict probabilities for home and away teams
@@ -549,16 +592,18 @@ class Model:
             odds_h = opp["OddsH"]
             odds_a = opp["OddsA"]
 
-            # Calculate EV and place bet for the home team
-            ev_home = predicted_prob_home * odds_h - (1 - predicted_prob_home)
-            with open('output.txt', 'a') as f:
-                f.write(f"predicted for home: {predicted_prob_home}" )
-            if ev_home > 0 and predicted_prob_home > 0.85:
+            # with open('output.txt', 'a') as f:
+            #     f.write(f"predicted for home: {predicted_prob_home}")
+            if predicted_prob_home > 0.90:
                 bet_amount = min(bankroll * 0.08, max_bet)  # Cap at 5% of bankroll or max_bet
                 bet_amount = max(bet_amount, min_bet)  # Ensure minimum bet limit
                 bets.at[idx, "BetH"] = bet_amount  # Place bet on home team
                 bankroll -= bet_amount  # Deduct from bankroll
+
+            if predicted_prob_away > 0.90:
+                bet_amount = min(bankroll * 0.08, max_bet)  # Cap at 5% of bankroll or max_bet
+                bet_amount = max(bet_amount, min_bet)  # Ensure minimum bet limit
+                bets.at[idx, "BetA"] = bet_amount  # Place bet on home team
+                bankroll -= bet_amount  # Deduct from bankroll
+
         return bets
-
-
-    
