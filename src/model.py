@@ -172,6 +172,8 @@ class Model:
             home_stats["blocks"] += game["HBLK"]
             home_stats["steals"] += game["HSTL"]
             home_stats["personal_fouls"] += game["HPF"]
+            home_stats["opponent_offensive_rebounds"] += game["AORB"]
+            home_stats["games_played"] += 1
 
             # Update team stats for the away team
             away_stats = self.team_map[away_team]["stats"]
@@ -191,8 +193,8 @@ class Model:
             away_stats["blocks"] += game["ABLK"]
             away_stats["steals"] += game["ASTL"]
             away_stats["personal_fouls"] += game["APF"]
-
-
+            away_stats["opponent_offensive_rebounds"] += game["HORB"]
+            away_stats["games_played"] += 1
 
     def get_team_averages(self, team_id: int):
         """
@@ -307,14 +309,19 @@ class Model:
         player_stl = player_data["STL"]
 
         # Extract league and team stats
+
+        total_number_games_team = team_stats["games_played"]
         lg_ft = league_stats["lg_ft"]
         lg_pf = league_stats["lg_pf"]
         lg_fta = league_stats["lg_fta"]
-        tm_ast = team_stats["tm_ast"]
-        tm_fg = team_stats["tm_fg"]
-        assist_factor = team_stats["assist_factor"]
-        vop = team_stats["vop"]
-        drbp = team_stats["drbp"]
+        tm_ast = team_stats["assists"]/ total_number_games_team
+        tm_fg = team_stats["field_goal_attempts"] /total_number_games_team
+        assist_factor = team_stats["assist_factor"]/total_number_games_team
+        AVG_N_POSESSIONS = 50
+        vop =  ((team_stats["points_scored"]/ total_number_games_team) / AVG_N_POSESSIONS)
+        drbp = team_stats["defensive_rebounds"] / (team_stats["defensive_rebounds"]
+                                                    + team_stats["opponent_offensive_rebounds"])
+
 
         # Calculate and return uPER
         return self.calculate_uPER(
@@ -386,12 +393,12 @@ class Model:
         team_id = game["HID"] if is_home_team else game["AID"]
         team_features = {
             "team_uPer": self.calculate_team_uPER(team_id, league_stats, team_stats),
-            "num_top_players_in_assists": sum(1 for pid in self.get_team_players(team_id) if pid in self.leaderboards["assists"]),
-            "num_top_players_in_defense": sum(1 for pid in self.get_team_players(team_id) if pid in self.leaderboards["blocks_steals"]),
-            "num_top_players_in_true_shooting": sum(1 for pid in self.get_team_players(team_id) if pid in self.leaderboards["true_shooting"]),
-            "num_top_players_in_scoring": sum(1 for pid in self.get_team_players(team_id) if pid in self.leaderboards["points"]),
-            "avg_scored_points_last_10": sum(self.team_map[team_id]["home_scored"] + self.team_map[team_id]["away_scored"]) / min(self.team_map[team_id]["games_played"], 10),
-            "avg_allowed_points_last_10": sum(self.team_map[team_id]["home_allowed"] + self.team_map[team_id]["away_allowed"]) / 10,
+            # "num_top_players_in_assists": sum(1 for pid in self.get_team_players(team_id) if pid in self.leaderboards["assists"]),
+            # "num_top_players_in_defense": sum(1 for pid in self.get_team_players(team_id) if pid in self.leaderboards["blocks_steals"]),
+            # "num_top_players_in_true_shooting": sum(1 for pid in self.get_team_players(team_id) if pid in self.leaderboards["true_shooting"]),
+            # "num_top_players_in_scoring": sum(1 for pid in self.get_team_players(team_id) if pid in self.leaderboards["points"]),
+            # "avg_scored_points_last_10": sum(self.team_map[team_id]["home_scored"] + self.team_map[team_id]["away_scored"]) / min(self.team_map[team_id]["games_played"], 10),
+            # "avg_allowed_points_last_10": sum(self.team_map[team_id]["home_allowed"] + self.team_map[team_id]["away_allowed"]) / 10,
         }
         return team_features
 
