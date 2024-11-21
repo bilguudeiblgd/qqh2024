@@ -290,23 +290,23 @@ class Model:
         :return: Calculated uPER for the player.
         """
         player_data = self.player_map[player_id]["total_stats"]
-
+        games_played = self.player_map[player_id]["games_played"]
         # Extract player-specific stats
-        min_played = player_data["MIN"]
+        min_played = player_data["MIN"] / games_played
         if min_played == 0:  # Avoid division by zero
             return 0.0
-        three_point_made = player_data["FG3M"]
-        player_pf = player_data["PF"]
-        player_ft = player_data["FTM"]
-        player_fg = player_data["FGM"]
-        player_ast = player_data["AST"]
-        player_orb = player_data["ORB"]
-        player_blk = player_data["BLK"]
-        player_fta = player_data["FTA"]
-        player_fga = player_data["FGA"]
-        player_trb = player_data["RB"]
-        player_to = player_data["TOV"]
-        player_stl = player_data["STL"]
+        three_point_made = player_data["FG3M"] / games_played
+        player_pf = player_data["PF"] / games_played
+        player_ft = player_data["FTM"] / games_played
+        player_fg = player_data["FGM"] / games_played
+        player_ast = player_data["AST"] / games_played
+        player_orb = player_data["ORB"] / games_played
+        player_blk = player_data["BLK"] / games_played
+        player_fta = player_data["FTA"] / games_played
+        player_fga = player_data["FGA"] / games_played
+        player_trb = player_data["RB"] / games_played
+        player_to = player_data["TOV"] / games_played
+        player_stl = player_data["STL"] / games_played
 
         # Extract league and team stats
 
@@ -314,19 +314,33 @@ class Model:
         lg_ft = league_stats["lg_ft"]
         lg_pf = league_stats["lg_pf"]
         lg_fta = league_stats["lg_fta"]
-        tm_ast = team_stats["assists"]/ total_number_games_team
-        tm_fg = team_stats["field_goal_attempts"] /total_number_games_team
-        assist_factor = team_stats["assist_factor"]/total_number_games_team
-        AVG_N_POSESSIONS = 50
-        vop =  ((team_stats["points_scored"]/ total_number_games_team) / AVG_N_POSESSIONS)
-        drbp = team_stats["defensive_rebounds"] / (team_stats["defensive_rebounds"]
-                                                    + team_stats["opponent_offensive_rebounds"])
+        lg_ast = league_stats["lg_ast"]
+        lg_fga = league_stats["lg_fga"]
+        lg_fgm = league_stats["lg_fgm"]
+        lg_pts = league_stats["lg_pts"]
 
+        lg_drb = league_stats["lg_drb"]
+
+
+        lg_orb = league_stats["lg_orb"]
+        lg_to = league_stats["lg_to"]
+
+        tm_ast = team_stats["assists"]/ total_number_games_team
+        tm_fg = team_stats["field_goals_made"] /total_number_games_team
+
+        factor = 2/3 - ((0.5 * (lg_ast/lg_fgm))/ (2 * (lg_fgm/lg_ft)))
+
+        assist_factor = team_stats["assists"] * team_stats["field_goals_made"] /team_stats["field_goal_attempts"]
+        assist_factor = assist_factor / total_number_games_team
+
+        AVG_N_POSESSIONS = 50
+        vop = lg_pts/(lg_fga - lg_orb + lg_to + 0.44 * lg_fta)
+        drbp = lg_drb / (lg_drb + lg_orb)
 
         # Calculate and return uPER
         return self.calculate_uPER(
             min_played, three_point_made, player_pf, lg_ft, lg_pf, player_ft, 
-            tm_ast, tm_fg, player_fg, assist_factor, player_ast, vop, drbp, 
+            tm_ast, tm_fg, player_fg, factor, player_ast, vop, drbp,
             player_orb, player_blk, player_fta, player_fga, player_trb, 
             lg_fta, player_to, player_stl
         )
@@ -440,9 +454,16 @@ class Model:
 
         # Define default league stats (example values, update as needed)
         league_stats = {
-            "lg_ft": 47333,  # Total free throws made in the league
-            "lg_pf": 49907,  # Total personal fouls in the league
-            "lg_fta": 62008,  # Total free throw attempts in the league
+            "lg_ft": 19.87,  # Total free throws made in the league
+            "lg_pf": 22.59,  # Total personal fouls in the league
+            "lg_fta": 26.41,  # Total free throw attempts in the league
+            "lg_ast": 22.70,
+            "lg_fgm" : 37.88,
+            "lg_fga" : 82.46,
+            "lg_pts" : 100.10,
+            "lg_orb" : 12.69,
+            "lg_to" : 15.15,
+            "lg_drb": 29.56
         }
 
         # Calculate team-specific stats
@@ -486,9 +507,16 @@ class Model:
 
         # Define default league stats
         league_stats = {
-            "lg_ft": 47333,  # Total free throws made in the league
-            "lg_pf": 49907,  # Total personal fouls in the league
-            "lg_fta": 62008,  # Total free throw attempts in the league
+            "lg_ft": 19.87,  # Total free throws made in the league
+            "lg_pf": 22.59,  # Total personal fouls in the league
+            "lg_fta": 26.41,  # Total free throw attempts in the league
+            "lg_ast": 22.70,
+            "lg_fgm": 37.88,
+            "lg_fga": 82.46,
+            "lg_pts": 100.10,
+            "lg_orb": 12.69,
+            "lg_to": 15.15,
+            "lg_drb" : 29.56
         }
 
         # Process past games
